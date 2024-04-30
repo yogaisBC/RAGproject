@@ -41,13 +41,14 @@ def pdf_to_text(pdf_path, txt_path):
 # Usage
 pdf_to_text('law.pdf', 'data/law.txt')
 
-openai.api_key = os.getenv('openai_key')
-documents = SimpleDirectoryReader("data").load_data()
-index = VectorStoreIndex.from_documents(documents, model='text-embeddings-large')
+def query(query):
+    openai.api_key = os.getenv('openai_key')
+    documents = SimpleDirectoryReader("data").load_data()
+    index = VectorStoreIndex.from_documents(documents, model='text-embeddings-large')
 
-query_engine = index.as_query_engine()
-response = query_engine.query("What did the author do growing up?")
+    query_engine = index.as_query_engine()
+    response = query_engine.query("What did the author do growing up?")
 
-print(f"Loaded {len(documents)} documents.")
+    print(f"Loaded {len(documents)} documents.")
 
-print(response)
+    print(response)
