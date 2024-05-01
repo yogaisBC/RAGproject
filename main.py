@@ -2,6 +2,7 @@ import os
 import datetime
 import logging
 import sys
+import time
 
 import openai
 import PyPDF2
@@ -11,6 +12,16 @@ from llama_index.core import VectorStoreIndex, SimpleDirectoryReader, Document
 from llama_index.core.schema import MetadataMode
 from llama_index.embeddings.openai import OpenAIEmbedding
 
+def timer_decorator(func):
+    def wrapper(*args, **kwargs):
+        start_time = time.time()
+        result = func(*args, **kwargs)
+        end_time = time.time()
+        print(f"Function {func.__name__} took {end_time - start_time} seconds to run.")
+        return result
+    return wrapper
+
+@timer_decorator
 def pdf_to_text(pdf_path, txt_path):
 
     pdfFileObj = open(pdf_path, 'rb')
@@ -30,6 +41,7 @@ def pdf_to_text(pdf_path, txt_path):
     with open(txt_path, 'w', encoding='utf-8') as text_file:
         text_file.write(text)
 
+@timer_decorator
 def chunking(documents, chunk_size=1000):
     chunked_docs = []
     for doc in documents:
@@ -56,6 +68,7 @@ def query(query, embed_model):
 
     return response
 
+@timer_decorator
 def process_queries(query_function, model, embed_model = None):
 
     os.makedirs('output', exist_ok=True)
