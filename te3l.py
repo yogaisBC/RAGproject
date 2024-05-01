@@ -15,7 +15,6 @@ logging.basicConfig(filename=filename, level=logging.DEBUG)
 
 load_dotenv()
 
-# Load the OpenAI embedding model
 embed_model = OpenAIEmbedding(model="text-embedding-3-large")
 
 pdf_to_text('law.pdf', 'data/law.txt')
