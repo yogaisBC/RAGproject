@@ -7,7 +7,8 @@ import openai
 import PyPDF2
 
 from dotenv import load_dotenv
-from llama_index.core import VectorStoreIndex, SimpleDirectoryReader
+from llama_index.core import VectorStoreIndex, SimpleDirectoryReader, Document
+from llama_index.core.schema import MetadataMode
 from llama_index.embeddings.openai import OpenAIEmbedding
 
 def pdf_to_text(pdf_path, txt_path):
@@ -29,13 +30,26 @@ def pdf_to_text(pdf_path, txt_path):
     with open(txt_path, 'w', encoding='utf-8') as text_file:
         text_file.write(text)
 
+def chunking(documents, chunk_size=1000):
+    chunked_docs = []
+    for doc in documents:
+        text = doc.text
+        for i in range(0, len(text), chunk_size):
+            chunk = text[i:i+chunk_size]
+            chunked_doc = Document(text=chunk, metadata=doc.metadata)
+            chunked_docs.append(chunked_doc)
+
+    return chunked_docs
+
 def query(query, embed_model):
     openai.api_key = os.getenv('openai_key')
     documents = SimpleDirectoryReader("data").load_data()
 
-    index = VectorStoreIndex.from_documents(documents, embedding=embed_model) if embed_model else VectorStoreIndex.from_documents(documents)
+    chunked_documents = chunking(documents)
 
-    print(embed_model)
+    index = VectorStoreIndex.from_documents(chunked_documents, embedding=embed_model) if embed_model else VectorStoreIndex.from_documents(chunked_documents)
+
+    ### ? print(embed_model)
 
     query_engine = index.as_query_engine()
     response = query_engine.query(query)
