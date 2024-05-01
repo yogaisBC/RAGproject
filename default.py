@@ -9,6 +9,8 @@ import PyPDF2
 from dotenv import load_dotenv
 from llama_index.core import VectorStoreIndex, SimpleDirectoryReader
 
+from utils import pdf_to_text
+
 now = datetime.datetime.now()
 
 timestamp = now.strftime("%Y-%m-%d_%H-%M-%S")
@@ -18,33 +20,6 @@ filename = f"logs/log_{timestamp}.txt"
 logging.basicConfig(filename=filename, level=logging.DEBUG)
 
 load_dotenv()
-
-def pdf_to_text(pdf_path, txt_path):
-    # Open file path
-    pdfFileObj = open(pdf_path, 'rb')
-
-    # Create a PDF reader object
-    pdfReader = PyPDF2.PdfReader(pdfFileObj)
-
-    # Get the number of pages in PDF file
-    num_pages = len(pdfReader.pages)
-
-    # Initialize a text variable
-    text = ""
-
-    # Extract text from each page
-    for page in range(num_pages):
-        pageObj = pdfReader.pages[page]
-        text += pageObj.extract_text()
-
-    # Close the PDF file object
-    pdfFileObj.close()
-
-    # Write the extracted text to a .txt file
-    with open(txt_path, 'w', encoding='utf-8') as text_file:
-        text_file.write(text)
-
-
 
 def query(query):
     openai.api_key = os.getenv('openai_key')
