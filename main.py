@@ -42,18 +42,28 @@ def pdf_to_text(pdf_path, txt_path):
         text_file.write(text)
 
 @timer_decorator
-def chunking(documents, chunk_size=1000):
+def chunking(documents, chunk_method = ''):
     chunked_docs = []
     for doc in documents:
-        text = doc.text
-        for i in range(0, len(text), chunk_size):
-            chunk = text[i:i+chunk_size]
-            chunked_doc = Document(text=chunk, metadata=doc.metadata)
-            chunked_docs.append(chunked_doc)
+        
+        # using different chunking params
+        if chunk_method == 'paragraph':
+            paragraphs = doc.text.split('\n\n')
+            for paragraph in paragraphs:
+                if paragraph.strip():  # Ignore empty paragraphs
+                    chunked_doc = Document(text=paragraph, metadata=doc.metadata)
+                    chunked_docs.append(chunked_doc)
+        else:
+            chunk_size = 1000
+            text = doc.text
+            for i in range(0, len(text), chunk_size):
+                chunk = text[i:i+chunk_size]
+                chunked_doc = Document(text=chunk, metadata=doc.metadata)
+                chunked_docs.append(chunked_doc)
 
     return chunked_docs
 
-def query(query, embed_model):
+def query(query, embed_model, chunking_method):
     openai.api_key = os.getenv('openai_key')
     documents = SimpleDirectoryReader("data").load_data()
 
