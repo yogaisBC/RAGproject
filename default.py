@@ -17,4 +17,4 @@ load_dotenv()
 
 pdf_to_text('law.pdf', 'data/law.txt')
 
-process_queries(query, 'default')
+process_queries(query, 'default', 'paragraph')

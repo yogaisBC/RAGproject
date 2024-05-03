@@ -19,4 +19,4 @@ embed_model = OpenAIEmbedding(model="text-embedding-3-large")
 
 pdf_to_text('law.pdf', 'data/law.txt')
 
-process_queries(query, 'text-embedding-3-large', embed_model)
+process_queries(query, 'text-embedding-3-large', 'paragraph', embed_model)
