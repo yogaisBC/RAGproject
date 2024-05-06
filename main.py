@@ -3,14 +3,25 @@ import datetime
 import logging
 import sys
 import time
+import json
 
 import openai
 import PyPDF2
+import boto3
 
 from dotenv import load_dotenv
 from llama_index.core import VectorStoreIndex, SimpleDirectoryReader, Document
 from llama_index.core.schema import MetadataMode
 from llama_index.embeddings.openai import OpenAIEmbedding
+
+dynamodb = boto3.resource('dynamodb',
+    region_name='eu-west-1',
+    aws_access_key_id=os.getenv('aws_access_key_id'),
+    aws_secret_access_key=os.getenv('aws_secret_access_key')
+)
+
+table = dynamodb.Table('RAGproject')
+
 
 def timer_decorator(func):
     def wrapper(*args, **kwargs):
@@ -76,10 +87,18 @@ def query(query, embed_model, chunking_method):
     query_engine = index.as_query_engine()
     response = query_engine.query(query)
 
-    return response
+    print(response.__dict__)
+
+    return response_to_dict(response)
+
+def response_to_dict(response):
+    return {
+        'response': response.response,
+        'metadata': response.metadata
+    }
 
 @timer_decorator
-def process_queries(query_function, model, embed_model = None):
+def process_queries(query_function, model, chunking_method, embed_model = None):
 
     os.makedirs('output', exist_ok=True)
 
@@ -91,6 +110,6 @@ def process_queries(query_function, model, embed_model = None):
 
             query_text = query_text.strip()
 
-            response = query_function(query_text, embed_model)
+            response = query_function(query_text, embed_model, chunking_method)
 
             output_file.write(str(response) + '\n\n')
