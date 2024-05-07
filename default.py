@@ -3,11 +3,11 @@ import datetime
 import logging
 import sys
 
-from main import *
+from funcs import *
 
 now = datetime.datetime.now()
 
-timestamp = now.strftime("%Y-%m-%d_%H-%M-%S")
+timestamp = now.strftime("%Y-%m-%d_%H-%M-%S")   
 
 filename = f"logs/log_{timestamp}.txt"
 

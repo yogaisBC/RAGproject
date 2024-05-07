@@ -3,7 +3,7 @@ import datetime
 import logging
 import sys
 
-from main import *
+from funcs import *
 
 now = datetime.datetime.now()
 
