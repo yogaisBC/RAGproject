@@ -7,7 +7,10 @@ from funcs import *
 
 now = datetime.datetime.now()
 
-timestamp = now.strftime("%Y-%m-%d_%H-%M-%S")   
+timestamp = now.strftime("%Y-%m-%d_%H-%M-%S")
+
+if not os.path.exists('logs'):
+    os.makedirs('logs')
 
 filename = f"logs/log_{timestamp}.txt"
 
