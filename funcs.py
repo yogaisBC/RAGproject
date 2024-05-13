@@ -36,7 +36,7 @@ def dynamodb_setup():
 
 def dynamodb_entry(entry):
     #put items into dynamodb
-    
+    pass
 
 def timer_decorator(func):
     def wrapper(*args, **kwargs):
