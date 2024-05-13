@@ -4,24 +4,39 @@ import logging
 import sys
 import time
 import json
+from decimal import Decimal
 
 import openai
 import PyPDF2
 import boto3
 
 from dotenv import load_dotenv
-from llama_index.core import VectorStoreIndex, SimpleDirectoryReader, Document
+from llama_index.core import VectorStoreIndex, SimpleDirectoryReader, Document, load_index_from_storage, StorageContext
 from llama_index.core.schema import MetadataMode
 from llama_index.embeddings.openai import OpenAIEmbedding
+from llama_index.vector_stores.dynamodb import DynamoDBVectorStore
 
-dynamodb = boto3.resource('dynamodb',
-    region_name='eu-west-1',
-    aws_access_key_id=os.getenv('aws_access_key_id'),
-    aws_secret_access_key=os.getenv('aws_secret_access_key')
-)
+def dynamodb_setup():
 
-table = dynamodb.Table('RAGproject')
+    dynamodb = boto3.client(
+        'dynamodb',
+        region_name='eu-west-2',
+        aws_access_key_id=os.getenv('aws_access_key_id'),
+        aws_secret_access_key=os.getenv('aws_secret_access_key')
+    )
 
+    table_name='RAG'
+
+    dynamodb_vector_store = DynamoDBVectorStore.from_table_name(
+        table_name=table_name
+        
+        )
+
+    storage_context = StorageContext.from_defaults(vector_store=dynamodb_vector_store)
+
+def dynamodb_entry(entry):
+    #put items into dynamodb
+    
 
 def timer_decorator(func):
     def wrapper(*args, **kwargs):
@@ -33,24 +48,29 @@ def timer_decorator(func):
     return wrapper
 
 @timer_decorator
-def pdf_to_text(pdf_path, txt_path):
+def pdf_to_text(pdf_directory, txt_directory):
+    files = os.listdir(pdf_directory)
+    for file in files:
+        if file.endswith('.pdf'):
+            pdf_path = os.path.join(pdf_directory, file)
+            txt_path = os.path.join(txt_directory, file.replace('.pdf', '.txt'))
 
-    pdfFileObj = open(pdf_path, 'rb')
+            pdfFileObj = open(pdf_path, 'rb')
 
-    pdfReader = PyPDF2.PdfReader(pdfFileObj)
+            pdfReader = PyPDF2.PdfReader(pdfFileObj)
 
-    num_pages = len(pdfReader.pages)
+            num_pages = len(pdfReader.pages)
 
-    text = ""
+            text = ""
 
-    for page in range(num_pages):
-        pageObj = pdfReader.pages[page]
-        text += pageObj.extract_text()
+            for page in range(num_pages):
+                pageObj = pdfReader.pages[page]
+                text += pageObj.extract_text()
 
-    pdfFileObj.close()
+            pdfFileObj.close()
 
-    with open(txt_path, 'w', encoding='utf-8') as text_file:
-        text_file.write(text)
+            with open(txt_path, 'w', encoding='utf-8') as text_file:
+                text_file.write(text)
 
 @timer_decorator
 def chunking(documents, chunk_method = ''):
@@ -76,13 +96,8 @@ def chunking(documents, chunk_method = ''):
 
 def query(query, embed_model, chunking_method):
     openai.api_key = os.getenv('openai_key')
-    documents = SimpleDirectoryReader("data").load_data()
 
-    chunked_documents = chunking(documents)
-
-    index = VectorStoreIndex.from_documents(chunked_documents, embedding=embed_model) if embed_model else VectorStoreIndex.from_documents(chunked_documents)
-
-    ### ? print(embed_model)
+    index = text_to_embeddings(embed_model)
 
     query_engine = index.as_query_engine()
     response = query_engine.query(query)
@@ -96,6 +111,19 @@ def response_to_dict(response):
         'response': response.response,
         'metadata': response.metadata
     }
+
+@timer_decorator
+def text_to_embeddings(embed_model):
+
+    dynamodb_setup()
+    
+    documents = SimpleDirectoryReader("data").load_data()
+
+    chunked_documents = chunking(documents)
+
+    index = VectorStoreIndex.from_documents(chunked_documents, embedding=embed_model) if embed_model else VectorStoreIndex.from_documents(chunked_documents)
+
+    return index
 
 @timer_decorator
 def process_queries(query_function, model, chunking_method, embed_model = None):
@@ -113,3 +141,12 @@ def process_queries(query_function, model, chunking_method, embed_model = None):
             response = query_function(query_text, embed_model, chunking_method)
 
             output_file.write(str(response) + '\n\n')
+
+if __name__ == '__main__':
+    load_dotenv()
+
+    dynamodb_setup()
+
+    embed_model = OpenAIEmbedding(model="text-embedding-3-large")
+
+    process_queries(query, 'text-embedding-3-large', 'paragraph', embed_model)
