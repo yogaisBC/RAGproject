@@ -1,7 +1,6 @@
-import os
-import datetime
 import logging
 import sys
+import os
 import time
 import json
 from decimal import Decimal
@@ -9,144 +8,162 @@ from decimal import Decimal
 import openai
 import PyPDF2
 import boto3
+import nest_asyncio
 
 from dotenv import load_dotenv
-from llama_index.core import VectorStoreIndex, SimpleDirectoryReader, Document, load_index_from_storage, StorageContext
-from llama_index.core.schema import MetadataMode
+from llama_index.core import VectorStoreIndex, SimpleDirectoryReader, Document, StorageContext, SummaryIndex, SimpleKeywordTableIndex, Settings
 from llama_index.embeddings.openai import OpenAIEmbedding
+from llama_index.storage.docstore.dynamodb import DynamoDBDocumentStore
 from llama_index.vector_stores.dynamodb import DynamoDBVectorStore
+from llama_index.storage.index_store.dynamodb import DynamoDBIndexStore
+from llama_index.core.node_parser import SentenceSplitter
+
+nest_asyncio.apply()
+
+logging.basicConfig(stream=sys.stdout, level=logging.INFO)
+logger = logging.getLogger()
+logger.addHandler(logging.StreamHandler(stream=sys.stdout))
 
 def dynamodb_setup():
-
-    dynamodb = boto3.client(
-        'dynamodb',
-        region_name='eu-west-2',
-        aws_access_key_id=os.getenv('aws_access_key_id'),
-        aws_secret_access_key=os.getenv('aws_secret_access_key')
-    )
-
-    table_name='RAG'
-
-    dynamodb_vector_store = DynamoDBVectorStore.from_table_name(
-        table_name=table_name
-        
+    try:
+        dynamodb = boto3.client(
+            'dynamodb',
+            aws_access_key_id=os.getenv('aws_access_key_id'),
+            aws_secret_access_key=os.getenv('aws_secret_access_key'),
+            region_name=os.getenv('aws_region')  # Ensure the region is set in your .env file
         )
+        region = dynamodb.meta.region_name
+        logger.info(f"DynamoDB client setup successfully in region: {region}")
+        return dynamodb
+    except Exception as e:
+        logger.error(f"Error setting up DynamoDB client: {e}")
+        raise
 
-    storage_context = StorageContext.from_defaults(vector_store=dynamodb_vector_store)
+def text_to_embeddings(embed_model):
+    try:
+        documents = SimpleDirectoryReader("data").load_data()
+        chunked_documents = chunking(documents)
 
-def dynamodb_entry(entry):
-    #put items into dynamodb
-    pass
+        for doc in chunked_documents:
+            # Split document into nodes
+            nodes = SentenceSplitter().get_nodes_from_documents([doc])
+            
+        storage_context = StorageContext.from_defaults(
+            docstore=DynamoDBDocumentStore.from_table_name(table_name='RAG'),
+            index_store=DynamoDBIndexStore.from_table_name(table_name='RAG'),
+            vector_store=DynamoDBVectorStore.from_table_name(table_name='RAG'),
+        )
+            
+        storage_context.docstore.add_documents(nodes)
+        logger.info(f"Documents added to DynamoDB: {nodes}")
+
+        index = VectorStoreIndex.from_documents(chunked_documents, embedding=embed_model) if embed_model else VectorStoreIndex.from_documents(chunked_documents)
+        
+        return index
+    except Exception as e:
+        logger.error(f"Error in text_to_embeddings: {e}")
+        raise
 
 def timer_decorator(func):
     def wrapper(*args, **kwargs):
         start_time = time.time()
         result = func(*args, **kwargs)
         end_time = time.time()
-        print(f"Function {func.__name__} took {end_time - start_time} seconds to run.")
+        logger.info(f"Function {func.__name__} took {end_time - start_time} seconds to run.")
         return result
     return wrapper
 
 @timer_decorator
 def pdf_to_text(pdf_directory, txt_directory):
-    files = os.listdir(pdf_directory)
-    for file in files:
-        if file.endswith('.pdf'):
-            pdf_path = os.path.join(pdf_directory, file)
-            txt_path = os.path.join(txt_directory, file.replace('.pdf', '.txt'))
+    try:
+        files = os.listdir(pdf_directory)
+        for file in files:
+            if file.endswith('.pdf'):
+                pdf_path = os.path.join(pdf_directory, file)
+                txt_path = os.path.join(txt_directory, file.replace('.pdf', '.txt'))
 
-            pdfFileObj = open(pdf_path, 'rb')
+                with open(pdf_path, 'rb') as pdfFileObj:
+                    pdfReader = PyPDF2.PdfReader(pdfFileObj)
+                    num_pages = len(pdfReader.pages)
 
-            pdfReader = PyPDF2.PdfReader(pdfFileObj)
+                    text = ""
+                    for page in range(num_pages):
+                        pageObj = pdfReader.pages[page]
+                        text += pageObj.extract_text()
 
-            num_pages = len(pdfReader.pages)
+                with open(txt_path, 'w', encoding='utf-8') as text_file:
+                    text_file.write(text)
 
-            text = ""
-
-            for page in range(num_pages):
-                pageObj = pdfReader.pages[page]
-                text += pageObj.extract_text()
-
-            pdfFileObj.close()
-
-            with open(txt_path, 'w', encoding='utf-8') as text_file:
-                text_file.write(text)
+                logger.info(f"Converted {file} to text.")
+    except Exception as e:
+        logger.error(f"Error in pdf_to_text: {e}")
+        raise
 
 @timer_decorator
-def chunking(documents, chunk_method = ''):
-    chunked_docs = []
-    for doc in documents:
-        
-        # using different chunking params
-        if chunk_method == 'paragraph':
-            paragraphs = doc.text.split('\n\n')
-            for paragraph in paragraphs:
-                if paragraph.strip():  # Ignore empty paragraphs
-                    chunked_doc = Document(text=paragraph, metadata=doc.metadata)
+def chunking(documents, chunk_method=''):
+    try:
+        chunked_docs = []
+        for doc in documents:
+            if chunk_method == 'paragraph':
+                paragraphs = doc.text.split('\n\n')
+                for paragraph in paragraphs:
+                    if paragraph.strip():  # Ignore empty paragraphs
+                        chunked_doc = Document(text=paragraph, metadata=doc.metadata)
+                        chunked_docs.append(chunked_doc)
+            else:
+                chunk_size = 1000
+                text = doc.text
+                for i in range(0, len(text), chunk_size):
+                    chunk = text[i:i+chunk_size]
+                    chunked_doc = Document(text=chunk, metadata=doc.metadata)
                     chunked_docs.append(chunked_doc)
-        else:
-            chunk_size = 1000
-            text = doc.text
-            for i in range(0, len(text), chunk_size):
-                chunk = text[i:i+chunk_size]
-                chunked_doc = Document(text=chunk, metadata=doc.metadata)
-                chunked_docs.append(chunked_doc)
 
-    return chunked_docs
+        logger.info(f"Chunked {len(documents)} documents into {len(chunked_docs)} chunks.")
+        return chunked_docs
+    except Exception as e:
+        logger.error(f"Error in chunking: {e}")
+        raise
 
+@timer_decorator
 def query(query, embed_model, chunking_method):
-    openai.api_key = os.getenv('openai_key')
+    try:
+        openai.api_key = os.getenv('openai_key')
 
-    index = text_to_embeddings(embed_model)
+        index = text_to_embeddings(embed_model)
 
-    query_engine = index.as_query_engine()
-    response = query_engine.query(query)
+        query_engine = index.as_query_engine()
+        response = query_engine.query(query)
 
-    print(response.__dict__)
-
-    return response_to_dict(response)
-
-def response_to_dict(response):
-    return {
-        'response': response.response,
-        'metadata': response.metadata
-    }
+        logger.info(f"Query response: {response.__dict__}")
+        return response
+    except Exception as e:
+        logger.error(f"Error in query: {e}")
+        raise
 
 @timer_decorator
-def text_to_embeddings(embed_model):
+def process_queries(query_function, model, chunking_method, embed_model=None):
+    try:
+        os.makedirs('output', exist_ok=True)
 
-    dynamodb_setup()
-    
-    documents = SimpleDirectoryReader("data").load_data()
+        with open('queries.txt', 'r') as queries_file, open(f'output/{model}_output.txt', 'w') as output_file:
+            queries = queries_file.readlines()
 
-    chunked_documents = chunking(documents)
+            for query_text in queries:
+                query_text = query_text.strip()
+                response = query_function(query_text, embed_model, chunking_method)
+                output_file.write(str(response) + '\n\n')
 
-    index = VectorStoreIndex.from_documents(chunked_documents, embedding=embed_model) if embed_model else VectorStoreIndex.from_documents(chunked_documents)
-
-    return index
-
-@timer_decorator
-def process_queries(query_function, model, chunking_method, embed_model = None):
-
-    os.makedirs('output', exist_ok=True)
-
-    with open('queries.txt', 'r') as queries_file, open(f'output/{model}_output.txt', 'w') as output_file:
-
-        queries = queries_file.readlines()
-
-        for query_text in queries:
-
-            query_text = query_text.strip()
-
-            response = query_function(query_text, embed_model, chunking_method)
-
-            output_file.write(str(response) + '\n\n')
+        logger.info(f"Processed queries with model {model}.")
+    except Exception as e:
+        logger.error(f"Error in process_queries: {e}")
+        raise
 
 if __name__ == '__main__':
-    load_dotenv()
-
-    dynamodb_setup()
-
-    embed_model = OpenAIEmbedding(model="text-embedding-3-large")
-
-    process_queries(query, 'text-embedding-3-large', 'paragraph', embed_model)
+    try:
+        load_dotenv()
+        dynamodb = dynamodb_setup()
+        embed_model = OpenAIEmbedding(model="text-embedding-3-large")
+        process_queries(query, 'text-embedding-3-large', 'paragraph', embed_model)
+    except Exception as e:
+        logger.error(f"Error in main: {e}")
+        raise
