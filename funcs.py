@@ -9,7 +9,6 @@ import openai
 import PyPDF2
 import boto3
 import nest_asyncio
-
 from dotenv import load_dotenv
 from llama_index.core import VectorStoreIndex, SimpleDirectoryReader, Document, StorageContext, SummaryIndex, SimpleKeywordTableIndex, Settings
 from llama_index.embeddings.openai import OpenAIEmbedding
@@ -18,20 +17,33 @@ from llama_index.vector_stores.dynamodb import DynamoDBVectorStore
 from llama_index.storage.index_store.dynamodb import DynamoDBIndexStore
 from llama_index.core.node_parser import SentenceSplitter
 
+from query import query
+
 nest_asyncio.apply()
 
 logging.basicConfig(stream=sys.stdout, level=logging.INFO)
 logger = logging.getLogger()
 logger.addHandler(logging.StreamHandler(stream=sys.stdout))
 
+# Load environment variables from .env file
+load_dotenv()
+
+TABLE_NAME = os.getenv('DYNAMODB_TABLE_NAME')
+AWS_REGION = os.getenv('AWS_REGION')
+AWS_ACCESS_KEY_ID = os.getenv('AWS_ACCESS_KEY_ID')
+AWS_SECRET_ACCESS_KEY = os.getenv('AWS_SECRET_ACCESS_KEY')
+OPENAI_KEY = os.getenv('OPENAI_KEY')
+
+
+#setup dynamodb, credentials
 def dynamodb_setup():
     try:
-        dynamodb = boto3.client(
-            'dynamodb',
-            aws_access_key_id=os.getenv('aws_access_key_id'),
-            aws_secret_access_key=os.getenv('aws_secret_access_key'),
-            region_name=os.getenv('aws_region')  # Ensure the region is set in your .env file
+        session = boto3.Session(
+            aws_access_key_id=AWS_ACCESS_KEY_ID,
+            aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
+            region_name=AWS_REGION
         )
+        dynamodb = session.client('dynamodb')
         region = dynamodb.meta.region_name
         logger.info(f"DynamoDB client setup successfully in region: {region}")
         return dynamodb
@@ -39,7 +51,8 @@ def dynamodb_setup():
         logger.error(f"Error setting up DynamoDB client: {e}")
         raise
 
-def text_to_embeddings(embed_model):
+### ! go to storing
+def docs_to_dynamodb(embed_model):
     try:
         documents = SimpleDirectoryReader("data").load_data()
         chunked_documents = chunking(documents)
@@ -49,19 +62,36 @@ def text_to_embeddings(embed_model):
             nodes = SentenceSplitter().get_nodes_from_documents([doc])
             
         storage_context = StorageContext.from_defaults(
-            docstore=DynamoDBDocumentStore.from_table_name(table_name='RAG'),
-            index_store=DynamoDBIndexStore.from_table_name(table_name='RAG'),
-            vector_store=DynamoDBVectorStore.from_table_name(table_name='RAG'),
+            docstore=DynamoDBDocumentStore.from_table_name(table_name=TABLE_NAME),
+            index_store=DynamoDBIndexStore.from_table_name(table_name=TABLE_NAME),
+            vector_store=DynamoDBVectorStore.from_table_name(table_name=TABLE_NAME),
         )
             
         storage_context.docstore.add_documents(nodes)
+
+        summary_index = SummaryIndex(nodes, storage_context=storage_context)
+        vector_index = VectorStoreIndex(nodes, storage_context=storage_context, embed_model=embed_model)
+        keyword_table_index = SimpleKeywordTableIndex(
+            nodes, storage_context=storage_context
+        )
+
+        list_id = summary_index.index_id
+        vector_id = vector_index.index_id
+        keyword_id = keyword_table_index.index_id
+
+        os.makedirs('id', exist_ok=True)
+
+        with open('id/list_id.txt', 'w') as f:
+            f.write(str(list_id))
+        with open('id/vector_id.txt', 'w') as f:
+            f.write(str(vector_id))
+        with open('id/keyword_id.txt', 'w') as f:
+            f.write(str(keyword_id))
+
         logger.info(f"Documents added to DynamoDB: {nodes}")
 
-        index = VectorStoreIndex.from_documents(chunked_documents, embedding=embed_model) if embed_model else VectorStoreIndex.from_documents(chunked_documents)
-        
-        return index
     except Exception as e:
-        logger.error(f"Error in text_to_embeddings: {e}")
+        logger.error(f"Error in docs_to_dynamodb: {e}")
         raise
 
 def timer_decorator(func):
@@ -124,46 +154,14 @@ def chunking(documents, chunk_method=''):
         logger.error(f"Error in chunking: {e}")
         raise
 
-@timer_decorator
-def query(query, embed_model, chunking_method):
-    try:
-        openai.api_key = os.getenv('openai_key')
-
-        index = text_to_embeddings(embed_model)
-
-        query_engine = index.as_query_engine()
-        response = query_engine.query(query)
-
-        logger.info(f"Query response: {response.__dict__}")
-        return response
-    except Exception as e:
-        logger.error(f"Error in query: {e}")
-        raise
-
-@timer_decorator
-def process_queries(query_function, model, chunking_method, embed_model=None):
-    try:
-        os.makedirs('output', exist_ok=True)
-
-        with open('queries.txt', 'r') as queries_file, open(f'output/{model}_output.txt', 'w') as output_file:
-            queries = queries_file.readlines()
-
-            for query_text in queries:
-                query_text = query_text.strip()
-                response = query_function(query_text, embed_model, chunking_method)
-                output_file.write(str(response) + '\n\n')
-
-        logger.info(f"Processed queries with model {model}.")
-    except Exception as e:
-        logger.error(f"Error in process_queries: {e}")
-        raise
-
 if __name__ == '__main__':
     try:
-        load_dotenv()
+        openai.api_key = OPENAI_KEY
         dynamodb = dynamodb_setup()
+        pdf_to_text('pdf','data')
         embed_model = OpenAIEmbedding(model="text-embedding-3-large")
-        process_queries(query, 'text-embedding-3-large', 'paragraph', embed_model)
+        docs_to_dynamodb(embed_model)
+        query(TABLE_NAME, embed_model)
     except Exception as e:
         logger.error(f"Error in main: {e}")
         raise
