@@ -1,5 +1,6 @@
 .venv
 .env
+.aws/
 logs/
 __pycache__/
 output/
